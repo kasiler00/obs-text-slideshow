@@ -20,8 +20,48 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <vector>
 #include <algorithm>
 #include "files.h"
+#include <regex>
+#include <string>
 
 using std::vector;
+
+struct ColorSegment {
+    size_t start;
+    size_t end;
+    std::string color;
+};
+
+static void parse_color_segments(const std::string& text, std::vector<ColorSegment>& segments)
+{
+    std::regex color_pattern(R"(\{color:(#?[a-zA-Z0-9]+)\}(.*?)\{/color\})");
+    std::smatch match;
+    std::string::const_iterator search_start(text.cbegin());
+
+    while (std::regex_search(search_start, text.cend(), match, color_pattern)) {
+        segments.push_back({
+            static_cast<size_t>(match.position()),
+            static_cast<size_t>(match.position() + match[0].length()),
+            match[1].str()
+        });
+        search_start = match.suffix().first;
+    }
+}
+
+static std::string apply_color_segments(const std::string& text, const std::vector<ColorSegment>& segments)
+{
+    std::string result = text;
+    for (auto it = segments.rbegin(); it != segments.rend(); ++it) {
+        std::string color_tag = "<font color=\"" + it->color + "\">";
+        result.insert(it->end, "</font>");
+        result.insert(it->start, color_tag);
+    }
+
+    // Remove the original color tags
+    std::regex remove_pattern(R"(\{color:#?[a-zA-Z0-9]+\}|\{/color\})");
+    result = std::regex_replace(result, remove_pattern, "");
+
+    return result;
+}
 
 void play_pause_hotkey(void *data, obs_hotkey_id id, obs_hotkey_t *hotkey,
 		       bool pressed)
@@ -137,6 +177,16 @@ static void add_text_src(struct text_slideshow *text_ss, struct darray *array,
 		new_source = (*text_creator)(file_path, text, settings);
 
 	if (new_source) {
+		// Apply color segments if text is provided
+		if (text) {
+			std::string processed_text = text;
+			std::vector<ColorSegment> color_segments;
+			parse_color_segments(processed_text, color_segments);
+			processed_text = apply_color_segments(processed_text, color_segments);
+			
+			obs_data_set_string(settings, "text", processed_text.c_str());
+		}
+
 		obs_source_update(new_source, settings);
 
 		uint32_t new_cx = obs_source_get_width(new_source);
